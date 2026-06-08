@@ -14,8 +14,10 @@ A to-do app that won't let go: escalating native macOS notifications nag you abo
 - **Quiet hours:** no nag notifications between 23:00–08:00 (configurable in `~/.tenacious-todo/tasks.json`)
 - **Morning summary:** daily "good morning" notification with pending/overdue count at 08:00
 - **Polished CLI:** aligned box-drawing columns, priority/status color coding, relative due times ("in 2h", "3d overdue"), TTY-aware (no color when piped)
-- Zero dependencies — pure Node.js 23 stdlib + macOS `osascript`
+- **Scriptable:** `list --json` emits the (filtered) tasks as a JSON array for piping into `jq` and friends
+- Zero dependencies — pure Node.js stdlib + macOS `osascript`
 - Runs as a background daemon (via launchd) that starts at login
+- Installable / runnable with `npx` (a `todo` bin is published in `package.json`)
 
 ## Quickstart
 
@@ -23,6 +25,12 @@ A to-do app that won't let go: escalating native macOS notifications nag you abo
 # Clone the repo
 git clone https://github.com/Alchemist-X/tenacious-todo.git
 cd tenacious-todo
+
+# (Optional) run it as the `todo` bin without installing globally:
+#   npx . --help
+#   npx . add "Ship feature" --due "2026-06-10 17:00" --priority high
+# or, once published to npm:  npx tenacious-todo --help
+# The examples below use `node todo.js`; `todo` (the bin) is equivalent.
 
 # Add tasks
 node todo.js add "Ship feature" --due "2026-06-10 17:00" --priority high --tag work --note "Review PR first"
@@ -38,6 +46,8 @@ node todo.js list --today
 node todo.js list --tag work
 node todo.js list --done
 node todo.js list --all        # pending + done
+node todo.js list --json       # machine-readable JSON array (respects filters)
+node todo.js list --overdue --json | jq '.[].text'
 
 # Quick view shortcuts
 node todo.js today
@@ -70,7 +80,8 @@ node daemon.js
 node todo.js add "<text>"
   --due "YYYY-MM-DD HH:MM"        Optional deadline
   --priority high|med|low          Default: med
-  --repeat daily|weekly|weekdays|"every 3d"
+  --repeat daily|weekly|weekdays|monthly|yearly|"every 3d"
+                                   Unsupported values are rejected at add-time
   --tag <name>                     Repeat for multiple tags: --tag work --tag urgent
   --note "<text>"                  A single short note shown below the task
 
@@ -80,6 +91,7 @@ node todo.js list
   --today                          Only tasks due today
   --done                           Only completed tasks
   --all                            Pending + done together
+  --json                           Emit a JSON array instead of the table
 
 node todo.js snooze <id> <delay>
   30m  2h  tomorrow  "YYYY-MM-DD HH:MM"
@@ -92,11 +104,13 @@ node todo.js snooze <id> <delay>
 | `daily` | Every 24 hours |
 | `weekly` | Every 7 days |
 | `weekdays` | Mon–Fri, skipping weekends |
+| `monthly` | Same day next calendar month (clamped: Jan 31 → Feb 28/29) |
+| `yearly` | Same date next year |
 | `every 3d` | Every 3 days |
 | `every 2w` | Every 2 weeks |
 | `every 4h` | Every 4 hours |
 
-When you mark a recurring task `done`, the next occurrence is created automatically with the same text, priority, tags, and note.
+When you mark a recurring task `done`, the next occurrence is created automatically with the same text, priority, tags, and note. Any `--repeat` value that isn't one of the above is **rejected at add-time** with a clear error, so a task can never be silently accepted with a schedule that would never reschedule.
 
 ## How the nagging works
 
@@ -147,10 +161,48 @@ All data lives in `~/.tenacious-todo/tasks.json`. The file is plain JSON — ins
   daemon.err     — daemon stderr (after launchd install)
 ```
 
+### Isolated store (`TENACIOUS_HOME`)
+
+Set the `TENACIOUS_HOME` environment variable to point the store at a different
+directory. When set (and non-empty), it **is** the data dir; otherwise the app
+falls back to `~/.tenacious-todo`. Both `todo.js` and `daemon.js` honor it.
+
+This is useful for scratch/throwaway stores and for testing without touching your
+real data:
+
+```bash
+TENACIOUS_HOME=/tmp/ttodo-scratch node todo.js add "test" --due "2026-06-10 09:00"
+TENACIOUS_HOME=/tmp/ttodo-scratch node todo.js list
+TENACIOUS_HOME=/tmp/ttodo-scratch node daemon.js --once
+```
+
+## Tests
+
+Pure store/filter/time logic (`computeNextDue`, the list filters, snooze math,
+immutable mutations) is covered by Node's built-in test runner — no test deps:
+
+```bash
+node --test          # or: npm test
+```
+
+## Self-eval
+
+A zero-dependency end-to-end eval harness lives under `eval/`. It runs every
+store-touching check against a fresh isolated `TENACIOUS_HOME` temp dir, so it
+never writes to your real store:
+
+```bash
+node eval/eval.mjs   # or: npm run eval
+```
+
+It prints `PASS C<N>` / `FAIL C<N>` per criterion and a final `RESULT: X/Y passed`
+line, exiting `0` only when all criteria pass. See `eval/criteria.md` for the
+human-readable criteria.
+
 ## Requirements
 
-- macOS (uses `osascript` for notifications; launchd for the background agent)
-- Node.js 23+ (ES modules, no `node_modules` needed)
+- macOS for notifications/daemon (uses `osascript`; launchd for the background agent). The CLI itself (`todo.js`) and the test suite run on any platform.
+- Node.js 18+ (ES modules, built-in test runner; no `node_modules` needed)
 
 ## Limitations
 

@@ -9,6 +9,7 @@
 import { execFile } from 'node:child_process'
 import { promisify } from 'node:util'
 import { readStore, writeStore, updateLastNotified, updateConfig } from './store.js'
+import { isSnoozed } from './filters.js'
 
 const execFileAsync = promisify(execFile)
 
@@ -129,11 +130,6 @@ async function sendMorningSummary(store) {
 
   const todayKey  = now.toISOString().slice(0, 10)
   return updateConfig(store, { lastMorningSummary: todayKey })
-}
-
-function isSnoozed(task, now) {
-  if (!task.snoozeUntil) return false
-  return new Date(task.snoozeUntil) > now
 }
 
 /**

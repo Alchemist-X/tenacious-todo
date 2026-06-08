@@ -6,8 +6,11 @@
 
 import {
   readStore, writeStore,
-  addTask, markDone, removeTask, snoozeTask
+  addTask, markDone, removeTask, snoozeTask,
+  isValidRepeat, REPEAT_KINDS
 } from './store.js'
+import { isOverdue, isSnoozed, isDueToday } from './filters.js'
+import { parseDue, parseSnooze } from './time.js'
 
 // ─── TTY detection ───────────────────────────────────────────────────────────
 const USE_COLOR = process.stdout.isTTY
@@ -48,42 +51,6 @@ const PRIORITY_LABEL = {
 }
 
 // ─── Date helpers ─────────────────────────────────────────────────────────────
-function parseDue(raw) {
-  const d = new Date(raw)
-  if (isNaN(d.getTime())) {
-    throw new Error(`Invalid date: "${raw}". Use format: "YYYY-MM-DD HH:MM" or ISO 8601.`)
-  }
-  return d.toISOString()
-}
-
-function parseSnooze(raw) {
-  const now = new Date()
-  const lower = raw.toLowerCase().trim()
-
-  if (lower === 'tomorrow') {
-    const t = new Date(now)
-    t.setDate(t.getDate() + 1)
-    t.setHours(9, 0, 0, 0)
-    return t.toISOString()
-  }
-
-  const minMatch = lower.match(/^(\d+)m$/)
-  if (minMatch) {
-    return new Date(now.getTime() + parseInt(minMatch[1], 10) * 60 * 1000).toISOString()
-  }
-
-  const hourMatch = lower.match(/^(\d+)h$/)
-  if (hourMatch) {
-    return new Date(now.getTime() + parseInt(hourMatch[1], 10) * 60 * 60 * 1000).toISOString()
-  }
-
-  // Fall back to a full date parse
-  const d = new Date(raw)
-  if (!isNaN(d.getTime())) return d.toISOString()
-
-  throw new Error(`Cannot parse snooze: "${raw}". Use: 30m, 2h, tomorrow, or a date.`)
-}
-
 function formatDate(iso) {
   if (!iso) return '—'
   const d = new Date(iso)
@@ -112,27 +79,6 @@ function relativeTime(iso) {
   if (rel === 'now') return color('now', C.yellow, C.bold)
   if (future)        return color(`in ${rel}`, C.cyan)
   return color(`${rel} overdue`, C.red, C.bold)
-}
-
-// ─── Status helpers ───────────────────────────────────────────────────────────
-function isOverdue(task) {
-  if (!task.due || task.done) return false
-  if (task.snoozeUntil && new Date(task.snoozeUntil) > new Date()) return false
-  return new Date(task.due) < new Date()
-}
-
-function isSnoozed(task) {
-  if (!task.snoozeUntil) return false
-  return new Date(task.snoozeUntil) > new Date()
-}
-
-function isDueToday(task) {
-  if (!task.due || task.done) return false
-  const d = new Date(task.due)
-  const today = new Date()
-  return d.getFullYear() === today.getFullYear()
-    && d.getMonth() === today.getMonth()
-    && d.getDate() === today.getDate()
 }
 
 // ─── Sorting ──────────────────────────────────────────────────────────────────
@@ -233,7 +179,9 @@ function renderTable(tasks, showDone = false) {
 
     const row = [
       rowColorFn(pad(t.id, COL.id)),
-      `${priGlyph} ${pad('', COL.pri - 2)}${priLabel}`.slice(0, COL.pri + 20), // account for escapes
+      // glyph + space + 4-char label = 6 plain chars; pad() measures plain width
+      // (ANSI stripped) so the column stays aligned without mangling escapes.
+      pad(`${priGlyph} ${priLabel}`, COL.pri),
       pad(statusStr, COL.status),
       pad(relDue, COL.rel),
       pad(tagStr, COL.tags),
@@ -257,7 +205,7 @@ function printList(tasks, title, showDone = false) {
   const sorted = sortTasks(visibleTasks)
 
   const pending  = tasks.filter(t => !t.done)
-  const overdue  = tasks.filter(isOverdue)
+  const overdue  = tasks.filter(t => isOverdue(t))
   const todayTasks = tasks.filter(t => !t.done && isDueToday(t))
 
   // Header banner
@@ -315,7 +263,14 @@ function cmdAdd(rest) {
       if (!['high', 'med', 'low'].includes(p)) throw new Error('Priority must be: high, med, or low')
       priority = p; i++
     } else if (flag === '--repeat' && val) {
-      repeat = val.toLowerCase().trim(); i++
+      const r = val.toLowerCase().trim()
+      if (!isValidRepeat(r)) {
+        throw new Error(
+          `Unsupported --repeat "${val}". Use one of: ${REPEAT_KINDS.join(', ')}, ` +
+          `or "every Nd"/"every Nw"/"every Nh".`
+        )
+      }
+      repeat = r; i++
     } else if (flag === '--tag' && val) {
       tags = [...tags, val.toLowerCase().replace(/^#/, '')]; i++
     } else if (flag === '--note' && val) {
@@ -344,6 +299,7 @@ function cmdAdd(rest) {
 }
 
 function cmdList(rest) {
+  const asJson       = rest.includes('--json')
   const filterTag    = getFlagVal(rest, '--tag')
   const filterOnly   = rest.includes('--overdue') ? 'overdue'
                      : rest.includes('--today')   ? 'today'
@@ -358,11 +314,18 @@ function cmdList(rest) {
     tasks = tasks.filter(t => t.tags && t.tags.includes(filterTag.toLowerCase().replace(/^#/, '')))
   }
   if (filterOnly === 'overdue') {
-    tasks = tasks.filter(isOverdue)
+    tasks = tasks.filter(t => isOverdue(t))
   } else if (filterOnly === 'today') {
     tasks = tasks.filter(t => !t.done && isDueToday(t))
   } else if (filterOnly === 'done') {
     tasks = tasks.filter(t => t.done)
+  }
+
+  // Machine-readable output: emit the (filtered) tasks as a JSON array. Never
+  // colorized; the store is the source of truth for shape.
+  if (asJson) {
+    console.log(JSON.stringify(tasks, null, 2))
+    return
   }
 
   const title = [
@@ -437,7 +400,7 @@ function cmdStats() {
   const total  = tasks.length
   const done   = tasks.filter(t => t.done)
   const pending = tasks.filter(t => !t.done)
-  const overdue = tasks.filter(isOverdue)
+  const overdue = tasks.filter(t => isOverdue(t))
 
   const byPriority = { high: 0, med: 0, low: 0 }
   for (const t of pending) {
@@ -512,7 +475,7 @@ function cmdToday() {
 
 function cmdOverdue() {
   const store = readStore()
-  const tasks = store.tasks.filter(isOverdue)
+  const tasks = store.tasks.filter(t => isOverdue(t))
   printList(tasks, 'Overdue Tasks', false)
 }
 
@@ -545,7 +508,8 @@ function printHelp() {
     ['add "<text>"', '[--due "DATE"] [--priority high|med|low]', 'Add a new task'],
     ['',             '[--repeat daily|weekly|weekdays|"every 3d"]', ''],
     ['',             '[--tag work] [--note "text"]', ''],
-    ['list',         '[--tag TAG] [--overdue] [--today] [--done] [--all]', 'List tasks with filters'],
+    ['list',         '[--tag TAG] [--overdue] [--today] [--done]', 'List tasks with filters'],
+    ['',             '[--all] [--json]', ''],
     ['today',        '', 'Show tasks due today'],
     ['overdue',      '', 'Show all overdue tasks'],
     ['done <id>',    '', 'Mark a task complete'],

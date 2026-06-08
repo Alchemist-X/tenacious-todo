@@ -1,0 +1,35 @@
+{
+  "name": "tenacious-todo",
+  "version": "2.0.0",
+  "description": "A nagging, terminal-native task manager that won't let you forget.",
+  "type": "module",
+  "bin": {
+    "todo": "todo.js"
+  },
+  "files": [
+    "todo.js",
+    "store.js",
+    "daemon.js",
+    "install-daemon.sh",
+    "README.md",
+    "LICENSE"
+  ],
+  "scripts": {
+    "test": "node --test",
+    "eval": "node eval/eval.mjs"
+  },
+  "engines": {
+    "node": ">=18"
+  },
+  "keywords": [
+    "todo",
+    "cli",
+    "task",
+    "reminder",
+    "notification",
+    "macos",
+    "productivity"
+  ],
+  "license": "MIT",
+  "dependencies": {}
+}

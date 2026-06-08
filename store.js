@@ -7,24 +7,43 @@ import { readFileSync, writeFileSync, mkdirSync, existsSync } from 'node:fs'
 import { homedir } from 'node:os'
 import { join } from 'node:path'
 
-const DATA_DIR = join(homedir(), '.tenacious-todo')
-const TASKS_FILE = join(DATA_DIR, 'tasks.json')
-const CONFIG_FILE = join(DATA_DIR, 'config.json')
+/**
+ * Resolve the data directory for the task store.
+ *
+ * Isolation contract: when the env var TENACIOUS_HOME is set (and non-empty),
+ * it IS the data dir. This lets tests and the eval harness point at a fresh
+ * temp dir so the real ~/.tenacious-todo is never touched. Falls back to
+ * ~/.tenacious-todo otherwise.
+ *
+ * Resolved per-call (not cached) so a single process can switch homes between
+ * operations — important for tests that spawn within one runtime.
+ */
+export function dataDir() {
+  const override = process.env.TENACIOUS_HOME
+  if (override && override.trim()) return override
+  return join(homedir(), '.tenacious-todo')
+}
+
+function tasksFile() {
+  return join(dataDir(), 'tasks.json')
+}
 
 function ensureDir() {
-  if (!existsSync(DATA_DIR)) {
-    mkdirSync(DATA_DIR, { recursive: true })
+  const dir = dataDir()
+  if (!existsSync(dir)) {
+    mkdirSync(dir, { recursive: true })
   }
 }
 
 /** @returns {{ tasks: Task[], lastNotified: Record<string,number>, config: Config }} */
 export function readStore() {
   ensureDir()
-  if (!existsSync(TASKS_FILE)) {
+  const file = tasksFile()
+  if (!existsSync(file)) {
     return { tasks: [], lastNotified: {}, config: defaultConfig() }
   }
   try {
-    const raw = readFileSync(TASKS_FILE, 'utf8')
+    const raw = readFileSync(file, 'utf8')
     const parsed = JSON.parse(raw)
     return {
       tasks: Array.isArray(parsed.tasks) ? parsed.tasks : [],
@@ -44,7 +63,7 @@ export function readStore() {
 export function writeStore(store) {
   ensureDir()
   try {
-    writeFileSync(TASKS_FILE, JSON.stringify(store, null, 2), 'utf8')
+    writeFileSync(tasksFile(), JSON.stringify(store, null, 2), 'utf8')
   } catch (err) {
     throw new Error(`Failed to write task store: ${err.message}`)
   }
@@ -177,15 +196,53 @@ export function updateConfig(store, configPatch) {
   return { ...store, config: { ...store.config, ...configPatch } }
 }
 
+/** Recognized repeat schedules. Used both to compute the next due date and to
+ *  validate a --repeat value at add-time (so unsupported schedules are rejected
+ *  instead of being silently accepted and then no-op'ing on `done`). */
+export const REPEAT_KINDS = ['daily', 'weekly', 'weekdays', 'monthly', 'yearly']
+
+/**
+ * Is this a repeat schedule the store can actually reschedule? Returns true for
+ * the named kinds and for "every N(h|d|w)" intervals. Used to validate input.
+ * @param {string} repeat
+ * @returns {boolean}
+ */
+export function isValidRepeat(repeat) {
+  if (typeof repeat !== 'string') return false
+  const lower = repeat.toLowerCase().trim()
+  if (REPEAT_KINDS.includes(lower)) return true
+  return /^every\s+(\d+)\s*(d|w|h|days?|weeks?|hours?)$/.test(lower)
+}
+
+/**
+ * Add `months` calendar months to a date, clamping the day-of-month so that
+ * e.g. Jan 31 + 1 month → Feb 28/29 rather than rolling into March. Pure.
+ * @param {Date} base
+ * @param {number} months
+ * @returns {Date}
+ */
+function addMonths(base, months) {
+  const day = base.getDate()
+  const target = new Date(base.getTime())
+  target.setDate(1) // avoid overflow while shifting the month
+  target.setMonth(target.getMonth() + months)
+  const daysInTargetMonth = new Date(
+    target.getFullYear(), target.getMonth() + 1, 0
+  ).getDate()
+  target.setDate(Math.min(day, daysInTargetMonth))
+  return target
+}
+
 /**
  * Compute the next due ISO string for a recurring task.
  * @param {string} currentDue ISO string
- * @param {string} repeat 'daily' | 'weekly' | 'weekdays' | 'every Nd'
- * @returns {string|null} ISO string or null if can't parse
+ * @param {string} repeat 'daily' | 'weekly' | 'weekdays' | 'monthly' | 'yearly' | 'every Nd'
+ * @returns {string|null} ISO string, or null if the schedule is unparseable
  */
 export function computeNextDue(currentDue, repeat) {
   const base = new Date(currentDue)
   if (isNaN(base.getTime())) return null
+  if (typeof repeat !== 'string') return null
 
   const lower = repeat.toLowerCase().trim()
 
@@ -203,6 +260,14 @@ export function computeNextDue(currentDue, repeat) {
       next.setDate(next.getDate() + 1)
     } while (next.getDay() === 0 || next.getDay() === 6)
     return next.toISOString()
+  }
+
+  if (lower === 'monthly') {
+    return addMonths(base, 1).toISOString()
+  }
+
+  if (lower === 'yearly') {
+    return addMonths(base, 12).toISOString()
   }
 
   // "every Nd" or "every Nw" or "every Nh"

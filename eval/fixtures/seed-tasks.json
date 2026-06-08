@@ -1,0 +1,41 @@
+{
+  "_comment": "Reference seed descriptor for C6 filter checks. The harness seeds equivalent tasks programmatically via the CLI into an isolated TENACIOUS_HOME store; this file documents the intended fixture shape and expected filter buckets.",
+  "now": "interpreted at runtime",
+  "tasks": [
+    {
+      "text": "Overdue high work item",
+      "dueOffsetHours": -48,
+      "priority": "high",
+      "tags": ["work"],
+      "buckets": ["overdue"]
+    },
+    {
+      "text": "Due today not done",
+      "dueOffsetHours": 2,
+      "priority": "med",
+      "tags": ["home"],
+      "buckets": ["today"]
+    },
+    {
+      "text": "Future task no bucket",
+      "dueOffsetHours": 120,
+      "priority": "low",
+      "tags": ["work"],
+      "buckets": []
+    },
+    {
+      "text": "Already done item",
+      "dueOffsetHours": -24,
+      "priority": "med",
+      "tags": ["errand"],
+      "done": true,
+      "buckets": ["done"]
+    }
+  ],
+  "expected": {
+    "overdue": ["Overdue high work item"],
+    "today": ["Due today not done"],
+    "done": ["Already done item"],
+    "tag:work": ["Overdue high work item", "Future task no bucket"]
+  }
+}
