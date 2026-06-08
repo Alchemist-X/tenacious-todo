@@ -1,0 +1,13 @@
+<svg xmlns='http://www.w3.org/2000/svg' width='1200' height='280' viewBox='0 0 1200 280' role='img' aria-label='Tenacious Todo'>
+ <defs>
+  <linearGradient id='bg' x1='0' y1='0' x2='1' y2='1'><stop offset='0' stop-color='#0b0b12'/><stop offset='1' stop-color='#16161f'/></linearGradient>
+  <linearGradient id='ac' x1='0' y1='0' x2='1' y2='0'><stop offset='0' stop-color='#ef4444'/><stop offset='1' stop-color='#f87171'/></linearGradient>
+ </defs>
+ <rect width='1200' height='280' fill='url(#bg)'/>
+ <rect width='1200' height='6' fill='url(#ac)'/>
+ <circle cx='1050' cy='150' r='150' fill='#ef4444' opacity='0.10'/>
+ <circle cx='1150' cy='66' r='70' fill='#f87171' opacity='0.08'/>
+ <text x='80' y='126' font-family='Segoe UI,Helvetica,Arial,sans-serif' font-size='56' font-weight='700' fill='#ffffff'>Tenacious Todo</text>
+ <text x='82' y='174' font-family='Segoe UI,Helvetica,Arial,sans-serif' font-size='25' fill='#9aa4b2'>A to-do that nags you with escalating notifications until it is done</text>
+ <text x='82' y='226' font-family='Consolas,monospace' font-size='16' fill='#ef4444' letter-spacing='1'>Node · zero-dep · macOS · MIT</text>
+</svg>
